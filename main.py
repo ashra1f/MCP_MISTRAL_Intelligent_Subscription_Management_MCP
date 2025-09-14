@@ -28,7 +28,7 @@ BASE_URL = (
     or os.getenv("ALPIC_PUBLIC_URL")
     or os.getenv("ALPIC_URL")
     or os.getenv("BASE_URL")
-    or "http://localhost:3000"
+    or "http://127.0.0.1:3000"
 )
 PORT = int(os.getenv("PORT", "3000"))
 GOOGLE_REDIRECT_PATH = os.getenv("GOOGLE_REDIRECT_PATH", "/auth/callback")
@@ -65,13 +65,25 @@ except Exception:
     _app = None
 
 def _oauth_metadata_payload():
-    # Using Google OAuth 2.0 endpoints and no registration_endpoint so Alpic DCR can proxy.
+    # Métadonnées configurées pour utiliser Google comme fournisseur OAuth 2.0 / OpenID Connect
     return {
+        "issuer": "https://accounts.google.com",
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
+        "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
+        "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
         "response_types_supported": ["code"],
-        "issuer": BASE_URL
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "scopes_supported": [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/gmail.readonly"
+        ],
+        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+        "code_challenge_methods_supported": ["S256"]
     }
+
 
 # If FastAPI is available, expose the two common well-known paths.
 try:
