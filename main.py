@@ -23,7 +23,15 @@ import urllib.parse
 # Configuration OAuth Google
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "611768263279-rcsao70g2vteer93tj0u6oa976r5cllp.apps.googleusercontent.com")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "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")
-BASE_URL = "http://127.0.0.1:3000"
+BASE_URL = (
+    os.getenv("PUBLIC_URL")
+    or os.getenv("ALPIC_PUBLIC_URL")
+    or os.getenv("ALPIC_URL")
+    or os.getenv("BASE_URL")
+    or "http://localhost:3000"
+)
+PORT = int(os.getenv("PORT", "3000"))
+GOOGLE_REDIRECT_PATH = os.getenv("GOOGLE_REDIRECT_PATH", "/auth/callback")
 
 # Configuration du provider Google OAuth
 auth_provider = GoogleProvider(
@@ -36,18 +44,67 @@ auth_provider = GoogleProvider(
         "https://www.googleapis.com/auth/userinfo.profile",
         "https://www.googleapis.com/auth/gmail.readonly"
     ],
-    redirect_path="/auth/callback"
+    redirect_path=GOOGLE_REDIRECT_PATH
 )
 
 # Initialisation du serveur MCP
 mcp = FastMCP(
     name="Subscription Manager avec Google Auth",
     auth=auth_provider,
-    port=3000,
+    port=PORT,
     stateless_http=True,
     debug=True
 )
 
+
+# --- Alpic compatibility: advertise OAuth2 metadata (no registration_endpoint) ---
+try:
+    # Try to access underlying FastAPI/Starlette app from FastMCP for custom routes
+    _app = getattr(mcp, "app", None) or getattr(mcp, "_app", None)
+except Exception:
+    _app = None
+
+def _oauth_metadata_payload():
+    # Using Google OAuth 2.0 endpoints and no registration_endpoint so Alpic DCR can proxy.
+    return {
+        "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_endpoint": "https://oauth2.googleapis.com/token",
+        "response_types_supported": ["code"],
+        "issuer": BASE_URL
+    }
+
+# If FastAPI is available, expose the two common well-known paths.
+try:
+    if _app is not None:
+        from fastapi import APIRouter
+        _router = APIRouter()
+
+        @_router.get("/.well-known/oauth-authorization-server")
+        def oauth_authorization_server_metadata():
+            return _oauth_metadata_payload()
+
+        @_router.get("/.well-known/openid-configuration")
+        def openid_configuration():
+            # Minimal OpenID config; issuer + endpoints. Keeps things simple for Alpic.
+            payload = _oauth_metadata_payload().copy()
+            payload.update({
+                "issuer": BASE_URL,
+                "scopes_supported": [
+                    "openid", "email", "profile", "https://www.googleapis.com/auth/gmail.readonly"
+                ]
+            })
+            return payload
+
+        # Health endpoint for probes
+        @_router.get("/healthz")
+        def healthz():
+            return {"ok": True, "issuer": BASE_URL}
+
+        _app.include_router(_router)
+except Exception as _e:
+    # Non-fatal; continue without custom metadata routes.
+    pass
+# --- end Alpic compatibility ---
 # Modèles de données
 @dataclass
 class Subscription:
